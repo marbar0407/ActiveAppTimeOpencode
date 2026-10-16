@@ -49,7 +49,9 @@ object NotificationHelper {
 
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setShortCriticalText(chipText)
-            builder.setRequestPromotedOngoing(true)
+            // Notification.EXTRA_REQUEST_PROMOTED_ONGOING (API 36.1, flagged). Set directly so the
+            // app also builds against compileSdk 36.
+            builder.extras.putBoolean("android.requestPromotedOngoing", true)
         }
         return builder.build()
     }

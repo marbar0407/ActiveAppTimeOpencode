@@ -47,7 +47,9 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.liveButton).setOnClickListener {
             if (Build.VERSION.SDK_INT >= 36) {
                 try {
-                    startActivity(Intent(Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS))
+                    val i = Intent("android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS")
+                    i.putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    startActivity(i)
                     return@setOnClickListener
                 } catch (_: Exception) {
                 }
