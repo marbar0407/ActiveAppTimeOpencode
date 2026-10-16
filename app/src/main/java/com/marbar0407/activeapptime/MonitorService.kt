@@ -2,24 +2,38 @@ package com.marbar0407.activeapptime
 
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
-import android.os.Looper
 
 class MonitorService : Service() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var handlerThread: HandlerThread
+    private lateinit var handler: Handler
     private lateinit var prefs: Prefs
+    private val state = UsageRepository.EventState()
     private val ignorePackages = mutableSetOf<String>()
+
+    private val timeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            handler.post {
+                UsageRepository.rebuildToday(this@MonitorService, state, System.currentTimeMillis())
+                publish()
+            }
+        }
+    }
 
     private val tick = object : Runnable {
         override fun run() {
             try {
-                update()
+                UsageRepository.advance(this@MonitorService, state, System.currentTimeMillis())
+                publish()
             } catch (_: Exception) {
             }
             handler.postDelayed(this, INTERVAL_MS)
@@ -33,7 +47,23 @@ class MonitorService : Service() {
         ignorePackages += packageName
         ignorePackages += "com.android.systemui"
         resolveLauncherPackage()?.let { ignorePackages += it }
+
+        handlerThread = HandlerThread("activeapptime").also { it.start() }
+        handler = Handler(handlerThread.looper)
+
+        UsageRepository.rebuildToday(this, state, System.currentTimeMillis())
         startAsForeground("…", "ActiveAppTime", "Получение данных об использовании…")
+
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(timeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(timeReceiver, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -64,11 +94,16 @@ class MonitorService : Service() {
         }
     }
 
-    private fun update() {
-        val current = UsageRepository.currentForegroundPackage(this, ignorePackages)
-        if (current != null) prefs.lastPackage = current
-        val shown = current ?: prefs.lastPackage
-        val millis = if (shown != null) UsageRepository.todayDurationFor(this, shown) else 0L
+    private fun publish() {
+        val current = state.foregroundPkg()
+        val shown = if (current != null && !ignorePackages.contains(current)) {
+            prefs.lastPackage = current
+            current
+        } else {
+            prefs.lastPackage
+        }
+        val now = System.currentTimeMillis()
+        val millis = if (shown != null) UsageRepository.durationFor(state, shown, now) else 0L
         val time = UsageRepository.formatDuration(millis)
         val label = shown?.let { appLabel(it) } ?: "—"
         val notification = NotificationHelper.build(
@@ -92,17 +127,21 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        try {
+            unregisterReceiver(timeReceiver)
+        } catch (_: Exception) {
+        }
+        handlerThread.quitSafely()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        private const val INTERVAL_MS = 60_000L
+        private const val INTERVAL_MS = 5_000L
 
         fun start(context: Context) {
-            val intent = Intent(context, MonitorService::class.java)
-            context.startForegroundService(intent)
+            context.startForegroundService(Intent(context, MonitorService::class.java))
         }
 
         fun stop(context: Context) {

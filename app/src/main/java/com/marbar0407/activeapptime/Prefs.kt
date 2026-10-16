@@ -8,9 +8,13 @@ class Prefs(context: Context) {
 
     var running: Boolean
         get() = sp.getBoolean("running", false)
-        set(value) = sp.edit().putBoolean("running", value).apply()
+        set(value) {
+            if (running != value) sp.edit().putBoolean("running", value).apply()
+        }
 
     var lastPackage: String?
         get() = sp.getString("last_package", null)
-        set(value) = sp.edit().putString("last_package", value).apply()
+        set(value) {
+            if (lastPackage != value) sp.edit().putString("last_package", value).apply()
+        }
 }
